@@ -58,13 +58,6 @@ def main():
         help="custom gemini api domain",
     )
     parser.add_argument(
-        "--gemini_google_search",
-        dest="gemini_google_search",
-        action="store_true",
-        default=None,
-        help="enable Gemini native Google Search grounding",
-    )
-    parser.add_argument(
         "--qwen_key",
         dest="qwen_key",
         help="Alibaba Qwen api key",

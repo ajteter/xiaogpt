@@ -60,12 +60,6 @@ class Config:
     glm_key: str = os.getenv("CHATGLM_KEY", "")
     gemini_key: str = os.getenv("GEMINI_KEY", "")  # keep the old rule
     gemini_model: str = os.getenv("GEMINI_MODEL", "")  # keep the old rule
-    gemini_google_search: bool = os.getenv("GEMINI_GOOGLE_SEARCH", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
     qwen_key: str = os.getenv("DASHSCOPE_API_KEY", "")  # keep the old rule
     serpapi_api_key: str = os.getenv("SERPAPI_API_KEY", "")
     gemini_api_domain: str = os.getenv(
@@ -111,11 +105,6 @@ class Config:
             if not self.openai_key:
                 raise Exception(
                     "Using GPT api needs openai API key, please google how to"
-                )
-        if self.bot == "gemini":
-            if not self.gemini_key:
-                raise Exception(
-                    "Using Gemini api needs gemini API key, please google how to"
                 )
 
     @property
