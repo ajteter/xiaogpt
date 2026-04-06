@@ -8,6 +8,7 @@ import logging
 import re
 import ssl
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -45,11 +46,23 @@ class MiGPT:
         self.in_conversation = False
         self.polling_event = asyncio.Event()
         self.last_record = asyncio.Queue(1)
+        self.device_failures = {
+            "status": 0,
+            "pause": 0,
+            "wakeup": 0,
+            "tts": 0,
+        }
+        self.device_circuit_until = {
+            "status": 0.0,
+            "pause": 0.0,
+            "wakeup": 0.0,
+            "tts": 0.0,
+        }
         # setup logger
         self.log = logging.getLogger("xiaogpt")
         self.log.setLevel(logging.DEBUG if config.verbose else logging.INFO)
         self.log.addHandler(RichHandler())
-        self.log.debug(config)
+        self.log.debug(config.masked_dict())
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
         self.mi_session = ClientSession(
             connector=TCPConnector(ssl=self.ssl_context)
@@ -58,6 +71,36 @@ class MiGPT:
     async def close(self):
         await self.mi_session.close()
 
+    def _device_circuit_open(self, name: str) -> bool:
+        return time.monotonic() < self.device_circuit_until[name]
+
+    def _mark_device_success(self, name: str) -> None:
+        self.device_failures[name] = 0
+        self.device_circuit_until[name] = 0.0
+
+    def _mark_device_failure(
+        self, name: str, error: Exception, *, threshold: int = 3, cooldown: int = 30
+    ) -> None:
+        self.device_failures[name] += 1
+        failures = self.device_failures[name]
+        if failures >= threshold:
+            self.device_circuit_until[name] = time.monotonic() + cooldown
+            self.log.warning(
+                "Device operation %s failed %s times; circuit open for %ss: %s",
+                name,
+                failures,
+                cooldown,
+                str(error),
+            )
+        else:
+            self.log.warning(
+                "Device operation %s failed (%s/%s): %s",
+                name,
+                failures,
+                threshold,
+                str(error),
+            )
+
     async def poll_latest_ask(self):
         async with ClientSession(
             connector=TCPConnector(ssl=self.ssl_context)
@@ -65,39 +108,47 @@ class MiGPT:
             session._cookie_jar = self.cookie_jar
             log_polling = int(self.config.verbose) > 1
             while True:
-                if log_polling:
-                    self.log.debug(
-                        "Listening new message, timestamp: %s", self.last_timestamp
-                    )
-                new_record = await self.get_latest_ask_from_xiaoai(session)
-                start = time.perf_counter()
-                if log_polling:
-                    self.log.debug(
-                        "Polling_event, timestamp: %s %s",
-                        self.last_timestamp,
-                        new_record,
-                    )
-                await self.polling_event.wait()
-                if (
-                    self.config.mute_xiaoai
-                    and new_record
-                    and self.need_ask_gpt(new_record)
-                ):
-                    await self.stop_if_xiaoai_is_playing()
-                if (d := time.perf_counter() - start) < 1:
-                    # sleep to avoid too many request
+                try:
+                    session._cookie_jar = self.cookie_jar
                     if log_polling:
                         self.log.debug(
-                            "Sleep %f, timestamp: %s", d, self.last_timestamp
+                            "Listening new message, timestamp: %s", self.last_timestamp
                         )
-                    # if you want force mute xiaoai, comment this line below.
-                    await asyncio.sleep(1 - d)
+                    new_record = await self.get_latest_ask_from_xiaoai(session)
+                    start = time.perf_counter()
+                    if log_polling:
+                        self.log.debug(
+                            "Polling_event, timestamp: %s %s",
+                            self.last_timestamp,
+                            new_record,
+                        )
+                    await self.polling_event.wait()
+                    if (
+                        self.config.mute_xiaoai
+                        and new_record
+                        and self.need_ask_gpt(new_record)
+                    ):
+                        await self.stop_if_xiaoai_is_playing()
+                    if (d := time.perf_counter() - start) < 1:
+                        # sleep to avoid too many request
+                        if log_polling:
+                            self.log.debug(
+                                "Sleep %f, timestamp: %s", d, self.last_timestamp
+                            )
+                        # if you want force mute xiaoai, comment this line below.
+                        await asyncio.sleep(1 - d)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    self.log.exception("Polling loop failed and will retry: %s", e)
+                    await asyncio.sleep(2)
 
     async def init_all_data(self):
         await self.login_miboy()
         await self._init_data_hardware()
         self.mi_session.cookie_jar.update_cookies(self.get_cookie())
         self.cookie_jar = self.mi_session.cookie_jar
+        self.__dict__.pop("tts", None)
         self.tts  # init tts
 
     def _get_config_cookie_dict(self) -> dict[str, str]:
@@ -281,16 +332,21 @@ class MiGPT:
         return None
 
     async def _retry(self):
+        self.log.warning("Reinitializing Xiaomi session data")
         await self.init_all_data()
 
     def _get_last_query(self, data: dict) -> dict | None:
         if d := data.get("data"):
-            records = json.loads(d).get("records")
+            try:
+                records = json.loads(d).get("records")
+            except (TypeError, json.JSONDecodeError) as e:
+                self.log.warning("Invalid Xiaomi conversation payload: %s", str(e))
+                return None
             if not records:
                 return None
             last_record = records[0]
             timestamp = last_record.get("time")
-            if timestamp > self.last_timestamp:
+            if isinstance(timestamp, (int, float)) and timestamp > self.last_timestamp:
                 try:
                     self.last_record.put_nowait(last_record)
                     self.last_timestamp = timestamp
@@ -300,17 +356,25 @@ class MiGPT:
         return None
 
     async def do_tts(self, value):
+        if self._device_circuit_open("tts"):
+            self.log.warning("Skipping Xiaomi TTS because tts circuit is open")
+            return
         if not self.config.use_command:
             try:
                 await self.mina_service.text_to_speech(self.device_id, value)
-            except Exception:
-                pass
+                self._mark_device_success("tts")
+            except Exception as e:
+                self._mark_device_failure("tts", e)
         else:
-            await miio_command(
-                self.miio_service,
-                self.config.mi_did,
-                f"{self.config.tts_command} {value}",
-            )
+            try:
+                await miio_command(
+                    self.miio_service,
+                    self.config.mi_did,
+                    f"{self.config.tts_command} {value}",
+                )
+                self._mark_device_success("tts")
+            except Exception as e:
+                self._mark_device_failure("tts", e)
 
     @functools.cached_property
     def tts(self) -> TTS:
@@ -353,34 +417,43 @@ class MiGPT:
 
         def done_callback(future):
             queue.put_nowait(EOF)
-            if future.exception():
-                self.log.error(future.exception())
+            with suppress(asyncio.CancelledError):
+                if future.exception():
+                    self.log.error("Stream task failed: %s", future.exception())
 
         self.polling_event.set()
         queue = asyncio.Queue()
         is_eof = False
         task = asyncio.create_task(collect_stream(queue))
         task.add_done_callback(done_callback)
-        while True:
-            if is_eof or not self.last_record.empty():
-                break
-            message = await queue.get()
-            if message is EOF:
-                break
-            while not queue.empty():
-                if (next_msg := queue.get_nowait()) is EOF:
-                    is_eof = True
+        try:
+            while True:
+                if is_eof or not self.last_record.empty():
                     break
-                message += next_msg
-            if message:
-                yield self._normalize(message)
-        self.polling_event.clear()
-        task.cancel()
+                message = await queue.get()
+                if message is EOF:
+                    break
+                while not queue.empty():
+                    if (next_msg := queue.get_nowait()) is EOF:
+                        is_eof = True
+                        break
+                    message += next_msg
+                if message:
+                    yield self._normalize(message)
+        finally:
+            self.polling_event.clear()
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def get_if_xiaoai_is_playing(self):
+        if self._device_circuit_open("status"):
+            self.log.debug("Skipping player status check because status circuit is open")
+            return False
         try:
             playing_info = await self.mina_service.player_get_status(self.device_id)
             # WTF xiaomi api
+            self._mark_device_success("status")
             return (
                 json.loads(playing_info.get("data", {}).get("info", "{}")).get(
                     "status", -1
@@ -388,27 +461,36 @@ class MiGPT:
                 == 1
             )
         except Exception as e:
-            self.log.warning("Failed to get xiaoai playing status: %s", str(e))
+            self._mark_device_failure("status", e)
             return False
 
     async def stop_if_xiaoai_is_playing(self):
+        if self._device_circuit_open("pause"):
+            self.log.debug("Skipping pause because pause circuit is open")
+            return
         try:
             is_playing = await self.get_if_xiaoai_is_playing()
             if is_playing:
                 self.log.debug("Muting xiaoai")
                 await self.mina_service.player_pause(self.device_id)
+            self._mark_device_success("pause")
         except Exception as e:
-            self.log.warning("Failed to mute xiaoai: %s", str(e))
+            self._mark_device_failure("pause", e)
 
     async def wakeup_xiaoai(self):
+        if self._device_circuit_open("wakeup"):
+            self.log.debug("Skipping wakeup because wakeup circuit is open")
+            return None
         try:
-            return await miio_command(
+            result = await miio_command(
                 self.miio_service,
                 self.config.mi_did,
                 f"{self.config.wakeup_command} {WAKEUP_KEYWORD} 0",
             )
+            self._mark_device_success("wakeup")
+            return result
         except Exception as e:
-            self.log.warning("Failed to wakeup xiaoai: %s", str(e))
+            self._mark_device_failure("wakeup", e)
             return None
 
     async def run_forever(self):
@@ -419,72 +501,88 @@ class MiGPT:
             f"Running xiaogpt now, 用 [green]{'/'.join(self.config.keyword)}[/] 开头来提问"
         )
         print(f"或用 [green]{self.config.start_conversation}[/] 开始持续对话")
-        while True:
-            self.polling_event.set()
-            new_record = await self.last_record.get()
-            self.polling_event.clear()  # stop polling when processing the question
-            query = new_record.get("query", "").strip()
-            if query == self.config.start_conversation:
-                if not self.in_conversation:
-                    print("开始对话")
-                    self.in_conversation = True
-                    await self.wakeup_xiaoai()
-                await self.stop_if_xiaoai_is_playing()
-                continue
-            elif query == self.config.end_conversation:
-                if self.in_conversation:
-                    print("结束对话")
-                    self.in_conversation = False
-                await self.stop_if_xiaoai_is_playing()
-                continue
+        try:
+            while True:
+                try:
+                    self.polling_event.set()
+                    new_record = await self.last_record.get()
+                    self.polling_event.clear()  # stop polling when processing the question
+                    query = new_record.get("query", "").strip()
+                    if query == self.config.start_conversation:
+                        if not self.in_conversation:
+                            print("开始对话")
+                            self.in_conversation = True
+                            await self.wakeup_xiaoai()
+                        await self.stop_if_xiaoai_is_playing()
+                        continue
+                    elif query == self.config.end_conversation:
+                        if self.in_conversation:
+                            print("结束对话")
+                            self.in_conversation = False
+                        await self.stop_if_xiaoai_is_playing()
+                        continue
 
-            # we can change prompt
-            if self.need_change_prompt(new_record):
-                print(new_record)
-                self._change_prompt(new_record.get("query", ""))
+                    # we can change prompt
+                    if self.need_change_prompt(new_record):
+                        print(new_record)
+                        self._change_prompt(new_record.get("query", ""))
 
-            if not self.need_ask_gpt(new_record):
-                self.log.debug("No new xiao ai record")
-                continue
+                    if not self.need_ask_gpt(new_record):
+                        self.log.debug("No new xiao ai record")
+                        continue
 
-            # drop key words
-            query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
-            # llama3 is not good at Chinese, so we need to add prompt in it.
-            if self.config.bot == "llama":
-                query = f"你是一个基于 llama3 的智能助手，请你跟我对话时，一定使用中文，不要夹杂一些英文单词，甚至英语短语也不能随意使用，但类似于 llama3 这样的专属名词除外，问题是：{query}"
+                    # drop key words
+                    query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
+                    # llama3 is not good at Chinese, so we need to add prompt in it.
+                    if self.config.bot == "llama":
+                        query = f"你是一个基于 llama3 的智能助手，请你跟我对话时，一定使用中文，不要夹杂一些英文单词，甚至英语短语也不能随意使用，但类似于 llama3 这样的专属名词除外，问题是：{query}"
 
-            print("-" * 20)
-            print("问题：" + query + "？")
-            if not self.chatbot.has_history():
-                query = f"{query},{self.config.prompt}"
-            # some model can not detect the language code, so we need to add it
+                    print("-" * 20)
+                    print("问题：" + query + "？")
+                    if not self.chatbot.has_history():
+                        query = f"{query},{self.config.prompt}"
+                    # some model can not detect the language code, so we need to add it
 
-            if self.config.mute_xiaoai:
-                await self.stop_if_xiaoai_is_playing()
-            else:
-                # waiting for xiaoai speaker done
-                await asyncio.sleep(8)
-            await self.do_tts(f"正在问{self.chatbot.name}请耐心等待")
-            try:
-                print(
-                    "以下是小爱的回答：",
-                    new_record.get("answers", [])[0].get("tts", {}).get("text"),
-                )
-            except IndexError:
-                print("小爱没回")
-            print(f"以下是 {self.chatbot.name} 的回答：", end="")
-            try:
-                await self.speak(self.ask_gpt(query))
-            except Exception as e:
-                print(f"{self.chatbot.name} 回答出错 {str(e)}")
-            else:
-                print("回答完毕")
-            if self.in_conversation:
-                print(f"继续对话，或用 `{self.config.end_conversation}` 结束对话")
-                await self.wakeup_xiaoai()
+                    if self.config.mute_xiaoai:
+                        await self.stop_if_xiaoai_is_playing()
+                    else:
+                        # waiting for xiaoai speaker done
+                        await asyncio.sleep(8)
+                    await self.do_tts(f"正在问{self.chatbot.name}请耐心等待")
+                    try:
+                        print(
+                            "以下是小爱的回答：",
+                            new_record.get("answers", [])[0].get("tts", {}).get("text"),
+                        )
+                    except IndexError:
+                        print("小爱没回")
+                    print(f"以下是 {self.chatbot.name} 的回答：", end="")
+                    try:
+                        await self.speak(self.ask_gpt(query))
+                    except Exception as e:
+                        print(f"{self.chatbot.name} 回答出错 {str(e)}")
+                    else:
+                        print("回答完毕")
+                    if self.in_conversation:
+                        print(f"继续对话，或用 `{self.config.end_conversation}` 结束对话")
+                        await self.wakeup_xiaoai()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    self.polling_event.set()
+                    self.log.exception("Unhandled error while processing latest ask: %s", e)
+                    await asyncio.sleep(1)
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def speak(self, text_stream: AsyncIterator[str]) -> None:
-        first_chunk = await text_stream.__anext__()
+        try:
+            first_chunk = await text_stream.__anext__()
+        except StopAsyncIteration:
+            self.log.warning("Bot returned an empty response stream")
+            return
         # Detect the language from the first chunk
         # Add suffix '-' because tetos expects it to exist when selecting voices
         # however, the nation code is never used.

@@ -3,7 +3,7 @@ from typing import AsyncIterator
 from miservice import MiIOService, MiNAService, miio_command
 
 from xiaogpt.config import Config
-from xiaogpt.tts.base import TTS
+from xiaogpt.tts.base import TTS, logger
 from xiaogpt.utils import calculate_tts_elapse
 
 
@@ -18,14 +18,17 @@ class MiTTS(TTS):
         if not self.config.use_command:
             try:
                 await self.mina_service.text_to_speech(self.device_id, text)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Mi TTS text_to_speech failed: %s", str(e))
         else:
-            await miio_command(
-                self.miio_service,
-                self.config.mi_did,
-                f"{self.config.tts_command} {text}",
-            )
+            try:
+                await miio_command(
+                    self.miio_service,
+                    self.config.mi_did,
+                    f"{self.config.tts_command} {text}",
+                )
+            except Exception as e:
+                logger.warning("Mi TTS miio_command failed: %s", str(e))
 
     async def synthesize(self, lang: str, text_stream: AsyncIterator[str]) -> None:
         async for text in text_stream:

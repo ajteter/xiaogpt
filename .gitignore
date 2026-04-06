@@ -133,6 +133,8 @@ xiao_config.json
 *.json
 config/
 *.mp3
+scripts/__pycache__/
+xiaogpt-tts-*/
 .pdm-python
 .pdm-build/
 *.sh

@@ -4,8 +4,15 @@ services:
     container_name: xiaogpt
     restart: unless-stopped
     network_mode: host
+    init: true
     volumes:
       - ./config:/config
     command: ["--config", "/config/xiao_config.yaml"]
     environment:
       XIAOGPT_PORT: "9527"
+    healthcheck:
+      test: ["CMD", "python3", "scripts/healthcheck.py", "--config", "/config/xiao_config.yaml"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

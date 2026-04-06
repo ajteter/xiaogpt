@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -21,6 +22,7 @@ generation_config = {
 
 DEFAULT_MODEL = "gemini-2.0-flash-lite"
 DEFAULT_SEARCH_MODEL = "gemini-2.0-flash"
+DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
 
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -84,14 +86,46 @@ class GeminiBot(ChatHistoryMixin, BaseBot):
         return url
 
     def _httpx_kwargs(self) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"trust_env": True}
+        kwargs: dict[str, Any] = {"trust_env": True, "timeout": DEFAULT_TIMEOUT}
         if self.proxy:
             kwargs["proxies"] = self.proxy
         return kwargs
 
+    async def _request_json(
+        self, *, stream: bool, headers: dict[str, str], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(**self._httpx_kwargs()) as sess:
+                    response = await sess.post(
+                        self._endpoint(stream=stream),
+                        headers=headers,
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    return response.json()
+            except httpx.HTTPStatusError as e:
+                if 400 <= e.response.status_code < 500:
+                    raise
+                last_error = e
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                last_error = e
+            if attempt < 2:
+                await asyncio.sleep(1 + attempt)
+        assert last_error is not None
+        raise last_error
+
     @staticmethod
     def _make_content(role: str, text: str) -> dict[str, Any]:
         return {"role": role, "parts": [{"text": text}]}
+
+    def _get_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        for query, answer in self.history:
+            messages.append(self._make_content("user", query))
+            messages.append(self._make_content("model", answer))
+        return messages
 
     @staticmethod
     def _extract_text(payload: dict[str, Any]) -> str:
@@ -133,7 +167,7 @@ class GeminiBot(ChatHistoryMixin, BaseBot):
 
     def _request_payload(self, query: str, **options: Any) -> dict[str, Any]:
         config = self._normalize_generation_config({**self.default_options, **options})
-        contents = [*self.get_messages(), self._make_content("user", query)]
+        contents = [*self._get_messages(), self._make_content("user", query)]
         payload: dict[str, Any] = {
             "contents": contents,
             "generationConfig": config,
@@ -166,10 +200,7 @@ class GeminiBot(ChatHistoryMixin, BaseBot):
             "x-goog-api-key": self.gemini_key,
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(**self._httpx_kwargs()) as sess:
-            response = await sess.post(self._endpoint(stream=False), headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        data = await self._request_json(stream=False, headers=headers, payload=payload)
         message = self._extract_text(data).strip()
         self.add_message(query, message)
         self._maybe_print_grounding(data)
@@ -184,29 +215,45 @@ class GeminiBot(ChatHistoryMixin, BaseBot):
         }
 
         async def text_gen() -> AsyncGenerator[str, None]:
-            async with httpx.AsyncClient(timeout=None, **self._httpx_kwargs()) as sess:
-                async with sess.stream(
-                    "POST",
-                    self._endpoint(stream=True),
-                    headers=headers,
-                    json=payload,
-                ) as response:
-                    response.raise_for_status()
-                    final_payload: dict[str, Any] | None = None
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        data = line[6:].strip()
-                        if data == "[DONE]":
-                            break
-                        payload_chunk = json.loads(data)
-                        final_payload = payload_chunk
-                        text = self._extract_text(payload_chunk)
-                        if text:
-                            print(text, end="")
-                            yield text
-                    if final_payload:
-                        self._maybe_print_grounding(final_payload)
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    httpx_kwargs = self._httpx_kwargs()
+                    httpx_kwargs["timeout"] = None
+                    async with httpx.AsyncClient(**httpx_kwargs) as sess:
+                        async with sess.stream(
+                            "POST",
+                            self._endpoint(stream=True),
+                            headers=headers,
+                            json=payload,
+                        ) as response:
+                            response.raise_for_status()
+                            final_payload: dict[str, Any] | None = None
+                            async for line in response.aiter_lines():
+                                if not line or not line.startswith("data: "):
+                                    continue
+                                data = line[6:].strip()
+                                if data == "[DONE]":
+                                    break
+                                payload_chunk = json.loads(data)
+                                final_payload = payload_chunk
+                                text = self._extract_text(payload_chunk)
+                                if text:
+                                    print(text, end="")
+                                    yield text
+                            if final_payload:
+                                self._maybe_print_grounding(final_payload)
+                            return
+                except httpx.HTTPStatusError as e:
+                    if 400 <= e.response.status_code < 500:
+                        raise
+                    last_error = e
+                except (httpx.TimeoutException, httpx.NetworkError) as e:
+                    last_error = e
+                if attempt < 2:
+                    await asyncio.sleep(1 + attempt)
+            assert last_error is not None
+            raise last_error
 
         message = ""
         try:
@@ -215,4 +262,5 @@ class GeminiBot(ChatHistoryMixin, BaseBot):
                 yield sentence
         finally:
             print()
+        if message:
             self.add_message(query, message)

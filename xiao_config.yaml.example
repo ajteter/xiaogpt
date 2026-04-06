@@ -10,6 +10,7 @@ mi_did: ""
 # 1. passToken
 # 2. cookie
 # 3. account/password
+# 同一时间只保留一种登录方式，其他留空
 
 # --- passToken 登录（推荐）---
 mi_user_id: ""
@@ -44,6 +45,8 @@ gpt_options: {}
 
 # ===== Gemini =====
 gemini_key: ""
+# 开启 Google Search 时，推荐明确填写支持搜索的模型
+# 例如 gemini-2.0-flash 或你自己已验证可用的更高版本模型
 gemini_model: ""
 gemini_google_search: false
 gemini_api_domain: "https://generativelanguage.googleapis.com"

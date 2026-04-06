@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import signal
 
 from xiaogpt.config import Config
 from xiaogpt.xiaogpt import MiGPT
@@ -252,13 +253,37 @@ def main():
 
     async def main(config: Config) -> None:
         miboy = MiGPT(config)
+        stop_event = asyncio.Event()
+
+        def _request_stop() -> None:
+            stop_event.set()
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _request_stop)
+            except NotImplementedError:
+                pass
+        run_task = asyncio.create_task(miboy.run_forever())
+        stop_task = asyncio.create_task(stop_event.wait())
         try:
-            await miboy.run_forever()
+            done, pending = await asyncio.wait(
+                {run_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if stop_task in done and not run_task.done():
+                run_task.cancel()
+            for task in pending:
+                task.cancel()
+            for task in done:
+                if task is run_task:
+                    await task
         finally:
+            for task in (run_task, stop_task):
+                if not task.done():
+                    task.cancel()
             await miboy.close()
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main(config))
+    asyncio.run(main(config))
 
 
 if __name__ == "__main__":

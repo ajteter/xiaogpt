@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Literal
 
 import yaml
@@ -98,9 +98,64 @@ class Config:
     tts_options: dict[str, Any] = field(default_factory=dict)
     gpt_options: dict[str, Any] = field(default_factory=dict)
 
+    def masked_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        secret_keys = {
+            "account",
+            "password",
+            "pass_token",
+            "cookie",
+            "openai_key",
+            "moonshot_api_key",
+            "yi_api_key",
+            "llama_api_key",
+            "glm_key",
+            "gemini_key",
+            "qwen_key",
+            "serpapi_api_key",
+            "volc_access_key",
+            "volc_secret_key",
+            "volc_api_key",
+        }
+        for key in secret_keys:
+            value = data.get(key)
+            if isinstance(value, str) and value:
+                data[key] = self._mask_secret(value)
+        tts_options = data.get("tts_options") or {}
+        if isinstance(tts_options, dict):
+            data["tts_options"] = {
+                key: (
+                    self._mask_secret(value)
+                    if isinstance(value, str)
+                    and any(token in key.lower() for token in ("key", "token", "secret", "password"))
+                    and value
+                    else value
+                )
+                for key, value in tts_options.items()
+            }
+        return data
+
+    @staticmethod
+    def _mask_secret(value: str) -> str:
+        if len(value) <= 8:
+            return "*" * len(value)
+        return f"{value[:4]}...{value[-4:]}"
+
     def __post_init__(self) -> None:
         if self.proxy:
             validate_proxy(self.proxy)
+        if self.cookie and any([self.account, self.password, self.pass_token]):
+            raise Exception("cookie login is enabled; please do not also set pass_token or account/password")
+        if self.pass_token and any([self.account, self.password]):
+            raise Exception("passToken login is enabled; please do not also set account/password")
+        if self.pass_token and not self.mi_user_id:
+            raise Exception("Using passToken login needs mi_user_id")
+        if self.pass_token and not self.mi_device_id:
+            raise Exception("Using passToken login needs mi_device_id")
+        if self.cookie and not self.mi_did:
+            raise Exception("Using cookie login needs mi_did")
+        if bool(self.account) ^ bool(self.password):
+            raise Exception("account/password login needs both account and password")
         if (
             self.api_base
             and self.api_base.endswith(("openai.azure.com", "openai.azure.com/"))
@@ -120,6 +175,8 @@ class Config:
                 raise Exception(
                     "Using Gemini api needs gemini API key, please google how to"
                 )
+            if self.gemini_google_search and not self.gemini_model:
+                self.gemini_model = "gemini-2.0-flash"
 
     @property
     def tts_command(self) -> str:
