@@ -81,6 +81,8 @@ xiaogpt --hardware LX06  --mute_xiaoai --use_chatgpt_api
 xiaogpt --hardware LX06  --mute_xiaoai --stream
 # 如果你想使用 google 的 gemini
 xiaogpt --hardware LX06  --mute_xiaoai --use_gemini --gemini_key ${gemini_key}
+# 如果你想给 gemini 打开原生 Google Search grounding
+xiaogpt --hardware LX06  --mute_xiaoai --use_gemini --gemini_key ${gemini_key} --gemini_google_search
 # 如果你想使用自己的 google gemini 服务
 python3 xiaogpt.py --hardware LX06  --mute_xiaoai --use_gemini --gemini_key ${gemini_key} --gemini_api_domain ${gemini_api_domain}
 # 如果你想使用阿里的通义千问
@@ -114,6 +116,8 @@ python3 xiaogpt.py --hardware LX06  --mute_xiaoai --stream
 python3 xiaogpt.py --hardware LX06  --mute_xiaoai --use_glm --glm_key ${glm_key}
 # 如果你想使用 google 的 gemini
 python3 xiaogpt.py --hardware LX06  --mute_xiaoai --use_gemini --gemini_key ${gemini_key}
+# 如果你想给 gemini 打开原生 Google Search grounding
+python3 xiaogpt.py --hardware LX06  --mute_xiaoai --use_gemini --gemini_key ${gemini_key} --gemini_google_search
 # 如果你想使用自己的 google gemini 服务
 python3 xiaogpt.py --hardware LX06  --mute_xiaoai --use_gemini --gemini_key ${gemini_key} --gemini_api_domain ${gemini_api_domain}
 # 如果你想使用阿里的通义千问
@@ -163,6 +167,18 @@ gpt_options:
 具体参数作用请参考 [Open AI API 文档](https://platform.openai.com/docs/api-reference/chat/create)。
 ChatGLM [文档](http://open.bigmodel.cn/doc/api#chatglm_130b)
 
+Gemini 也支持通过 `gpt_options` 传入生成参数，并可通过 `gemini_google_search` 启用原生 Google Search grounding：
+
+```yaml
+bot: gemini
+gemini_key: "your-key"
+gemini_google_search: true
+gpt_options:
+  temperature: 0.7
+  top_p: 0.9
+  max_output_tokens: 1024
+```
+
 ## 配置项说明
 
 | 参数                  | 说明                                                                                                       | 默认值                                                                                                    | 可选值                                                           |
@@ -177,6 +193,8 @@ ChatGLM [文档](http://open.bigmodel.cn/doc/api#chatglm_130b)
 | serpapi_api_key       | serpapi 的 key 参考 [SerpAPI](https://serpapi.com/)                                                          |                                                                                                           |                                                                  |
 | glm_key               | chatglm 的 apikey                                                                                          |                                                                                                           |                                                                  |
 | gemini_key            | gemini 的 apikey [参考](https://makersuite.google.com/app/apikey)                                          |                                                                                                           |                                                                  |
+| gemini_model          | gemini 模型名，留空时默认 `gemini-2.0-flash-lite`；开启原生搜索时默认 `gemini-2.0-flash`                   |                                                                                                           |                                                                  |
+| gemini_google_search  | 是否启用 Gemini 原生 Google Search grounding                                                               | `false`                                                                                                   |                                                                  |
 | gemini_api_domain     | gemini 的自定义域名 [参考](https://github.com/antergone/palm-netlify-proxy)                                |                                                                                                           |
 | qwen_key              | qwen 的 apikey [参考](https://help.aliyun.com/zh/dashscope/developer-reference/api-details)                |                                                                                                           |                                                                  |
 | cookie                | 小爱账户 cookie（如果用上面密码登录可以不填）                                                              |                                                                                                           |                                                                  |

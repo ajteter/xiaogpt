@@ -75,7 +75,10 @@ glm_key: ""
 # ----- Gemini -----
 # Gemini key: https://makersuite.google.com/app/apikey
 gemini_key: ""
+# 为空时默认使用 gemini-2.0-flash-lite；若开启原生 Google Search，则默认使用 gemini-2.0-flash
 gemini_model: ""
+# 是否启用 Gemini 原生 Google Search grounding
+gemini_google_search: false
 # Gemini 自定义域名: https://github.com/antergone/palm-netlify-proxy
 gemini_api_domain: ""
 
