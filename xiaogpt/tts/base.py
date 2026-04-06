@@ -37,13 +37,18 @@ class TTS(abc.ABC):
             await asyncio.sleep(1)
 
     async def get_if_xiaoai_is_playing(self) -> bool:
-        playing_info = await self.mina_service.player_get_status(self.device_id)
-        # WTF xiaomi api
-        is_playing = (
-            json.loads(playing_info.get("data", {}).get("info", "{}")).get("status", -1)
-            == 1
-        )
-        return is_playing
+        try:
+            playing_info = await self.mina_service.player_get_status(self.device_id)
+            # WTF xiaomi api
+            return (
+                json.loads(playing_info.get("data", {}).get("info", "{}")).get(
+                    "status", -1
+                )
+                == 1
+            )
+        except Exception as e:
+            logger.warning("Failed to get xiaoai playing status in TTS: %s", str(e))
+            return False
 
     @abc.abstractmethod
     async def synthesize(self, lang: str, text_stream: AsyncIterator[str]) -> None:

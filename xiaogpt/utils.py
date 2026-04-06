@@ -19,6 +19,19 @@ def parse_cookie_string(cookie_string):
     cookie = SimpleCookie()
     cookie.load(cookie_string)
     cookies_dict = {k: m.value for k, m in cookie.items()}
+    if not cookies_dict and cookie_string:
+        for chunk in cookie_string.split(";"):
+            chunk = chunk.strip()
+            if not chunk or "=" not in chunk:
+                continue
+            key, value = chunk.split("=", 1)
+            key = key.strip()
+            if not key:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                value = value[1:-1]
+            cookies_dict[key] = value
     return cookiejar_from_dict(cookies_dict, cookiejar=None, overwrite=True)
 
 

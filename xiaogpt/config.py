@@ -53,6 +53,9 @@ class Config:
     hardware: str = "LX06"
     account: str = os.getenv("MI_USER", "")
     password: str = os.getenv("MI_PASS", "")
+    mi_user_id: str = os.getenv("MI_USER_ID", "")
+    mi_device_id: str = os.getenv("MI_DEVICE_ID", "")
+    pass_token: str = os.getenv("MI_PASS_TOKEN", "")
     openai_key: str = os.getenv("OPENAI_API_KEY", "")
     moonshot_api_key: str = os.getenv("MOONSHOT_API_KEY", "")
     yi_api_key: str = os.getenv("YI_API_KEY", "")

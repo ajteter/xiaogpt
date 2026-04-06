@@ -23,6 +23,21 @@ def main():
         help="xiaomi password",
     )
     parser.add_argument(
+        "--mi_user_id",
+        dest="mi_user_id",
+        help="xiaomi user id for passToken login",
+    )
+    parser.add_argument(
+        "--mi_device_id",
+        dest="mi_device_id",
+        help="xiaomi browser deviceId for passToken login",
+    )
+    parser.add_argument(
+        "--pass_token",
+        dest="pass_token",
+        help="xiaomi passToken for passToken login",
+    )
+    parser.add_argument(
         "--openai_key",
         dest="openai_key",
         help="openai api key",

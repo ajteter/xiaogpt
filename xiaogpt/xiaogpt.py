@@ -6,11 +6,13 @@ import functools
 import json
 import logging
 import re
+import ssl
 import time
 from pathlib import Path
 from typing import AsyncIterator
 
-from aiohttp import ClientSession, ClientTimeout
+import certifi
+from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from miservice import MiAccount, MiIOService, MiNAService, miio_command
 from rich import print
 from rich.logging import RichHandler
@@ -48,13 +50,18 @@ class MiGPT:
         self.log.setLevel(logging.DEBUG if config.verbose else logging.INFO)
         self.log.addHandler(RichHandler())
         self.log.debug(config)
-        self.mi_session = ClientSession()
+        self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self.mi_session = ClientSession(
+            connector=TCPConnector(ssl=self.ssl_context)
+        )
 
     async def close(self):
         await self.mi_session.close()
 
     async def poll_latest_ask(self):
-        async with ClientSession() as session:
+        async with ClientSession(
+            connector=TCPConnector(ssl=self.ssl_context)
+        ) as session:
             session._cookie_jar = self.cookie_jar
             log_polling = int(self.config.verbose) > 1
             while True:
@@ -93,6 +100,11 @@ class MiGPT:
         self.cookie_jar = self.mi_session.cookie_jar
         self.tts  # init tts
 
+    def _get_config_cookie_dict(self) -> dict[str, str]:
+        if not self.config.cookie:
+            return {}
+        return parse_cookie_string(self.config.cookie).get_dict()
+
     async def login_miboy(self):
         account = MiAccount(
             self.mi_session,
@@ -100,57 +112,93 @@ class MiGPT:
             self.config.password,
             str(self.mi_token_home),
         )
-        # Forced login to refresh to refresh token
-        await account.login("micoapi")
+        if self.config.cookie:
+            cookie_dict = self._get_config_cookie_dict()
+            missing = [
+                key
+                for key in ("deviceId", "userId", "serviceToken")
+                if not cookie_dict.get(key)
+            ]
+            if missing:
+                raise Exception(
+                    "cookie missing required fields for Xiaomi startup: "
+                    + ", ".join(missing)
+                )
+            account.token = {
+                "deviceId": cookie_dict["deviceId"],
+                "userId": cookie_dict["userId"],
+                # MiNA requests only need the micoapi serviceToken cookie.
+                "micoapi": ("", cookie_dict["serviceToken"]),
+            }
+        elif self.config.pass_token:
+            if not self.config.mi_user_id:
+                raise Exception("passToken login needs mi_user_id")
+            account.token = {
+                "deviceId": self.config.mi_device_id or "",
+                "userId": str(self.config.mi_user_id),
+                "passToken": self.config.pass_token,
+            }
+            if not await account.login("micoapi"):
+                raise Exception("Xiaomi micoapi login failed with passToken")
+        else:
+            # Forced login to refresh token.
+            if not await account.login("micoapi"):
+                raise Exception("Xiaomi micoapi login failed")
         self.mina_service = MiNAService(account)
         self.miio_service = MiIOService(account)
 
     async def _init_data_hardware(self):
-        if self.config.cookie:
-            # if use cookie do not need init
-            return
         hardware_data = await self.mina_service.device_list()
+        if not hardware_data:
+            raise Exception("cannot fetch Xiaomi device list from micoapi")
         # fix multi xiaoai problems we check did first
         # why we use this way to fix?
         # some videos and articles already in the Internet
         # we do not want to change old way, so we check if miotDID in `env` first
         # to set device id
 
+        matched_hardware = None
         for h in hardware_data:
             if did := self.config.mi_did:
                 if h.get("miotDID", "") == str(did):
                     self.device_id = h.get("deviceID")
+                    matched_hardware = h
                     break
                 else:
                     continue
             if h.get("hardware", "") == self.config.hardware:
                 self.device_id = h.get("deviceID")
+                matched_hardware = h
                 break
         else:
             raise Exception(
                 f"we have no hardware: {self.config.hardware} please use `micli mina` to check"
             )
         if not self.config.mi_did:
-            devices = await self.miio_service.device_list()
-            try:
-                self.config.mi_did = next(
-                    d["did"]
-                    for d in devices
-                    if d["model"].endswith(self.config.hardware.lower())
-                )
-            except StopIteration:
+            if matched_hardware and matched_hardware.get("miotDID"):
+                self.config.mi_did = str(matched_hardware["miotDID"])
+            elif self.config.cookie:
                 raise Exception(
-                    f"cannot find did for hardware: {self.config.hardware} "
-                    "please set it via MI_DID env"
+                    f"cannot find mi_did for hardware: {self.config.hardware} "
+                    "when using cookie mode, please set MI_DID explicitly"
                 )
+            else:
+                devices = await self.miio_service.device_list()
+                try:
+                    self.config.mi_did = next(
+                        d["did"]
+                        for d in devices
+                        if d["model"].endswith(self.config.hardware.lower())
+                    )
+                except StopIteration:
+                    raise Exception(
+                        f"cannot find did for hardware: {self.config.hardware} "
+                        "please set it via MI_DID env"
+                    )
 
     def get_cookie(self):
         if self.config.cookie:
-            cookie_jar = parse_cookie_string(self.config.cookie)
-            # set attr from cookie fix #134
-            cookie_dict = cookie_jar.get_dict()
-            self.device_id = cookie_dict["deviceId"]
-            return cookie_jar
+            return parse_cookie_string(self.config.cookie)
         else:
             with open(self.mi_token_home) as f:
                 user_data = json.loads(f.read())
@@ -330,27 +378,38 @@ class MiGPT:
         task.cancel()
 
     async def get_if_xiaoai_is_playing(self):
-        playing_info = await self.mina_service.player_get_status(self.device_id)
-        # WTF xiaomi api
-        is_playing = (
-            json.loads(playing_info.get("data", {}).get("info", "{}")).get("status", -1)
-            == 1
-        )
-        return is_playing
+        try:
+            playing_info = await self.mina_service.player_get_status(self.device_id)
+            # WTF xiaomi api
+            return (
+                json.loads(playing_info.get("data", {}).get("info", "{}")).get(
+                    "status", -1
+                )
+                == 1
+            )
+        except Exception as e:
+            self.log.warning("Failed to get xiaoai playing status: %s", str(e))
+            return False
 
     async def stop_if_xiaoai_is_playing(self):
-        is_playing = await self.get_if_xiaoai_is_playing()
-        if is_playing:
-            self.log.debug("Muting xiaoai")
-            # stop it
-            await self.mina_service.player_pause(self.device_id)
+        try:
+            is_playing = await self.get_if_xiaoai_is_playing()
+            if is_playing:
+                self.log.debug("Muting xiaoai")
+                await self.mina_service.player_pause(self.device_id)
+        except Exception as e:
+            self.log.warning("Failed to mute xiaoai: %s", str(e))
 
     async def wakeup_xiaoai(self):
-        return await miio_command(
-            self.miio_service,
-            self.config.mi_did,
-            f"{self.config.wakeup_command} {WAKEUP_KEYWORD} 0",
-        )
+        try:
+            return await miio_command(
+                self.miio_service,
+                self.config.mi_did,
+                f"{self.config.wakeup_command} {WAKEUP_KEYWORD} 0",
+            )
+        except Exception as e:
+            self.log.warning("Failed to wakeup xiaoai: %s", str(e))
+            return None
 
     async def run_forever(self):
         await self.init_all_data()

@@ -1,0 +1,11 @@
+services:
+  xiaogpt:
+    build: .
+    container_name: xiaogpt
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config:/config
+    command: ["--config", "/config/xiao_config.yaml"]
+    environment:
+      XIAOGPT_PORT: "9527"
