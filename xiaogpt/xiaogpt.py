@@ -64,9 +64,7 @@ class MiGPT:
         self.log.addHandler(RichHandler())
         self.log.debug(config.masked_dict())
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
-        self.mi_session = ClientSession(
-            connector=TCPConnector(ssl=self.ssl_context)
-        )
+        self.mi_session = ClientSession(connector=TCPConnector(ssl=self.ssl_context))
 
     async def close(self):
         await self.mi_session.close()
