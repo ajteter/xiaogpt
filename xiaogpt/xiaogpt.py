@@ -129,14 +129,14 @@ class MiGPT:
                         and self.need_ask_gpt(new_record)
                     ):
                         await self.stop_if_xiaoai_is_playing()
-                    if (d := time.perf_counter() - start) < 1:
+                    if (d := time.perf_counter() - start) < self.config.poll_interval:
                         # sleep to avoid too many request
                         if log_polling:
                             self.log.debug(
                                 "Sleep %f, timestamp: %s", d, self.last_timestamp
                             )
                         # if you want force mute xiaoai, comment this line below.
-                        await asyncio.sleep(1 - d)
+                        await asyncio.sleep(self.config.poll_interval - d)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:

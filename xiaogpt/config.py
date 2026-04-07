@@ -89,6 +89,7 @@ class Config:
     deployment_id: str | None = None
     use_command: bool = False
     verbose: int = 0
+    poll_interval: float = float(os.getenv("XIAOGPT_POLL_INTERVAL", "1"))
     start_conversation: str = "开始持续对话"
     end_conversation: str = "结束持续对话"
     stream: bool = False
@@ -144,6 +145,8 @@ class Config:
     def __post_init__(self) -> None:
         if self.proxy:
             validate_proxy(self.proxy)
+        if self.poll_interval <= 0:
+            raise Exception("poll_interval must be greater than 0")
         if self.cookie and any([self.account, self.password, self.pass_token]):
             raise Exception("cookie login is enabled; please do not also set pass_token or account/password")
         if self.pass_token and any([self.account, self.password]):

@@ -148,6 +148,7 @@ gemini_api_domain: "https://generativelanguage.googleapis.com"
 tts: "mi"
 stream: true
 mute_xiaoai: true
+poll_interval: 3
 keyword:
   - "你个渣渣"
 ```
@@ -157,6 +158,7 @@ keyword:
 - 登录方式三选一，只保留一种，其他留空
 - 当前最推荐 `tts: "mi"`
 - `mute_xiaoai: true` 适合减少和小爱原回答重叠，但也会让“被新记录打断”的体感更明显
+- `poll_interval` 是小爱会话轮询间隔，默认建议可以调到 `3`
 
 ## 配置自检
 
@@ -261,10 +263,10 @@ docker compose down
 
 ## GitHub 与镜像构建现状
 
-当前仓库 `.github/workflows/` 下已经有两套和 Docker 相关的工作流：
+当前仓库 `.github/workflows/` 下已经整理为两套面向当前 fork 项目的工作流：
 
-- [CI.yaml](/Users/huxiao/Public/GitHub/xiaogpt/.github/workflows/CI.yaml)
-- [release.yaml](/Users/huxiao/Public/GitHub/xiaogpt/.github/workflows/release.yaml)
+- [ci.yml](/Users/huxiao/Public/GitHub/xiaogpt/.github/workflows/ci.yml)
+- [docker.yml](/Users/huxiao/Public/GitHub/xiaogpt/.github/workflows/docker.yml)
 
 它们当前已经具备这些基础：
 
@@ -272,13 +274,45 @@ docker compose down
 - 使用 `docker/setup-buildx-action`
 - 支持多架构构建
 - 已包含 `linux/amd64,linux/arm64`
-- 已支持推送到 Docker Hub
+- 默认主发布目标是 `GHCR`
+- 配置好 Docker Hub secrets 后，可选附加推送到 Docker Hub
 
 这意味着：
 
 - 后续把仓库推到 GitHub 后
-- 配好 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`
-- 就可以通过 GitHub Actions 自动生成多架构镜像
+- 不需要再保留上游硬编码镜像名
+- 可以直接按当前仓库名自动生成镜像标签
+- 可以通过 GitHub Actions 自动生成多架构镜像
+
+当前仓库地址：
+
+- `https://github.com/ajteter/xiaogpt`
+
+### GitHub Actions 当前行为
+
+- `ci.yml`
+  - 检查格式
+  - 安装依赖
+  - 校验 CLI
+  - 校验模板配置
+  - 做一次 Docker build 校验
+- `docker.yml`
+  - 在 `main/master` push 时发布镜像
+  - 在 `v*` tag push 时发布镜像
+  - 默认发布到 `ghcr.io/ajteter/xiaogpt`
+  - 如果配置了 Docker Hub secrets，额外再发布到 `docker.io/<DOCKERHUB_USERNAME>/<repo-name>`
+
+### 需要配置的 secrets
+
+如果你只用 GHCR：
+
+- GitHub Actions 不需要额外 Docker Hub 凭证
+- 推荐直接把 GHCR 作为默认镜像源
+
+如果你还要同时推 Docker Hub：
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
 
 ## 后续目标：GitHub Action -> 镜像 -> 树莓派
 
@@ -292,11 +326,13 @@ docker compose down
 
 这个目标和当前仓库状态是对齐的，现阶段还缺的主要不是代码能力，而是发布和部署侧的最后整理：
 
-- 确认最终镜像命名
-- 明确 Docker Hub 或 GHCR 发布目标
 - 根据树莓派系统确认 `arm64` 还是 `arm/v7`
 - 决定树莓派上是否继续使用 `network_mode: host`
 - 准备树莓派上的 `config/xiao_config.yaml`
+
+树莓派部署文档见：
+
+- [DEPLOY-RPI.md](/Users/huxiao/Public/GitHub/xiaogpt/DEPLOY-RPI.md)
 
 ## 常见排查顺序
 

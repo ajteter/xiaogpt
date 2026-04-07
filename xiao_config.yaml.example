@@ -29,6 +29,7 @@ password: ""
 use_command: false
 mute_xiaoai: true
 verbose: false
+poll_interval: 3
 proxy: ""
 
 # ===== Bot =====

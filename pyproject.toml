@@ -3,7 +3,7 @@ name = "xiaogpt"
 description = "Play ChatGPT or other LLM with xiaomi AI speaker"
 readme = "README.md"
 authors = [
-    {name = "yihong0618", email = "zouzou0208@gmail.com"},
+    {name = "ajteter"},
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -36,7 +36,7 @@ license = {text = "MIT"}
 dynamic = ["version", "optional-dependencies"]
 
 [project.urls]
-Homepage = "https://github.com/yihong0618/xiaogpt"
+Homepage = "https://github.com/ajteter/xiaogpt"
 
 [project.scripts]
 xiaogpt = "xiaogpt.cli:main"
