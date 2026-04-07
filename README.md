@@ -27,6 +27,7 @@
 3. `account/password`
 
 本次真实跑通使用的是 `passToken` 路线。
+获取 `passToken` 方法： https://github.com/Yonsm/MiService/issues/57
 
 需要的字段：
 
