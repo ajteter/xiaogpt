@@ -223,7 +223,8 @@ class MiGPT:
                 break
         else:
             raise Exception(
-                f"we have no hardware: {self.config.hardware} please use `micli mina` to check"
+                f"we have no hardware: {self.config.hardware} "
+                "please use `micli mina` to check"
             )
         if not self.config.mi_did:
             if matched_hardware and matched_hardware.get("miotDID"):
@@ -273,7 +274,7 @@ class MiGPT:
         # Replace the query and time values with user input
         record["query"] = input("Enter the new query: ")
         record["time"] = int(time.time() * 1000)
-        # Convert the updated data_dict back to a string and update the data['data'] value
+        # Convert the updated data_dict back to a string and update the data.
         data["data"] = json.dumps(data_dict)
         await asyncio.sleep(1)
 
@@ -324,7 +325,7 @@ class MiGPT:
             except Exception:
                 self.log.warning("get latest ask from xiaoai error, retry")
                 if i == 1:
-                    # tricky way to fix #282 #272 # if it is the third time we re init all data
+                    # Reinitialize on repeated broken Xiaomi responses.
                     print("Maybe outof date trying to re init it")
                     await self._retry()
             else:
@@ -448,7 +449,9 @@ class MiGPT:
 
     async def get_if_xiaoai_is_playing(self):
         if self._device_circuit_open("status"):
-            self.log.debug("Skipping player status check because status circuit is open")
+            self.log.debug(
+                "Skipping player status check because status circuit is open"
+            )
             return False
         try:
             playing_info = await self.mina_service.player_get_status(self.device_id)
@@ -498,7 +501,8 @@ class MiGPT:
         task = asyncio.create_task(self.poll_latest_ask())
         assert task is not None  # to keep the reference to task, do not remove this
         print(
-            f"Running xiaogpt now, 用 [green]{'/'.join(self.config.keyword)}[/] 开头来提问"
+            "Running xiaogpt now, 用 "
+            f"[green]{'/'.join(self.config.keyword)}[/] 开头来提问"
         )
         print(f"或用 [green]{self.config.start_conversation}[/] 开始持续对话")
         try:
@@ -506,7 +510,8 @@ class MiGPT:
                 try:
                     self.polling_event.set()
                     new_record = await self.last_record.get()
-                    self.polling_event.clear()  # stop polling when processing the question
+                    # Stop polling while processing the current question.
+                    self.polling_event.clear()
                     query = new_record.get("query", "").strip()
                     if query == self.config.start_conversation:
                         if not self.in_conversation:
@@ -535,7 +540,11 @@ class MiGPT:
                     query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
                     # llama3 is not good at Chinese, so we need to add prompt in it.
                     if self.config.bot == "llama":
-                        query = f"你是一个基于 llama3 的智能助手，请你跟我对话时，一定使用中文，不要夹杂一些英文单词，甚至英语短语也不能随意使用，但类似于 llama3 这样的专属名词除外，问题是：{query}"
+                        query = (
+                            "你是一个基于 llama3 的智能助手，请你跟我对话时，"
+                            "一定使用中文，不要夹杂一些英文单词，甚至英语短语也不能随意使用，"
+                            f"但类似于 llama3 这样的专属名词除外，问题是：{query}"
+                        )
 
                     print("-" * 20)
                     print("问题：" + query + "？")
@@ -564,13 +573,17 @@ class MiGPT:
                     else:
                         print("回答完毕")
                     if self.in_conversation:
-                        print(f"继续对话，或用 `{self.config.end_conversation}` 结束对话")
+                        print(
+                            f"继续对话，或用 `{self.config.end_conversation}` 结束对话"
+                        )
                         await self.wakeup_xiaoai()
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     self.polling_event.set()
-                    self.log.exception("Unhandled error while processing latest ask: %s", e)
+                    self.log.exception(
+                        "Unhandled error while processing latest ask: %s", e
+                    )
                     await asyncio.sleep(1)
         finally:
             task.cancel()

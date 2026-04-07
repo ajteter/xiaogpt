@@ -128,7 +128,10 @@ class Config:
                 key: (
                     self._mask_secret(value)
                     if isinstance(value, str)
-                    and any(token in key.lower() for token in ("key", "token", "secret", "password"))
+                    and any(
+                        token in key.lower()
+                        for token in ("key", "token", "secret", "password")
+                    )
                     and value
                     else value
                 )
@@ -148,9 +151,14 @@ class Config:
         if self.poll_interval <= 0:
             raise Exception("poll_interval must be greater than 0")
         if self.cookie and any([self.account, self.password, self.pass_token]):
-            raise Exception("cookie login is enabled; please do not also set pass_token or account/password")
+            raise Exception(
+                "cookie login is enabled; please do not also set "
+                "pass_token or account/password"
+            )
         if self.pass_token and any([self.account, self.password]):
-            raise Exception("passToken login is enabled; please do not also set account/password")
+            raise Exception(
+                "passToken login is enabled; please do not also set account/password"
+            )
         if self.pass_token and not self.mi_user_id:
             raise Exception("Using passToken login needs mi_user_id")
         if self.pass_token and not self.mi_device_id:
