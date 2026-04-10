@@ -334,7 +334,7 @@ class MiGPT:
     def _normalize_pending_query(query: str) -> str:
         query = query.strip()
         if query.startswith(WAKEUP_KEYWORD):
-            query = query[len(WAKEUP_KEYWORD):].lstrip("，,。.!！?？ ")
+            query = query[len(WAKEUP_KEYWORD) :].lstrip("，,。.!！?？ ")
         return query.strip()
 
     def _can_recall_query(self, query: str) -> bool:
@@ -647,7 +647,9 @@ class MiGPT:
 
                         self.clear_pending_query()
                         # drop key words
-                        query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
+                        query = re.sub(
+                            rf"^({'|'.join(self.config.keyword)})", "", query
+                        )
                     # llama3 is not good at Chinese, so we need to add prompt in it.
                     if self.config.bot == "llama":
                         query = (
