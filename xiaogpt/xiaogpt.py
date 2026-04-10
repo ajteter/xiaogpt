@@ -334,7 +334,7 @@ class MiGPT:
     def _normalize_pending_query(query: str) -> str:
         query = query.strip()
         if query.startswith(WAKEUP_KEYWORD):
-            query = query[len(WAKEUP_KEYWORD) :].lstrip("，,。.!！?？ ")
+            query = query[len(WAKEUP_KEYWORD):].lstrip("，,。.!！?？ ")
         return query.strip()
 
     def _can_recall_query(self, query: str) -> bool:
