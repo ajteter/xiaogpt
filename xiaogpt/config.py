@@ -39,6 +39,7 @@ DEFAULT_COMMAND = ("5-1", "5-5")
 
 KEY_WORD = ("帮我", "请")
 CHANGE_PROMPT_KEY_WORD = ("更改提示词",)
+RECALL_PREVIOUS_KEY_WORD = ("回答上一句",)
 PROMPT = "以下请用 300 字以内回答，请只回答文字不要带链接"
 # simulate_xiaoai_question
 MI_ASK_SIMULATE_DATA = {
@@ -81,6 +82,7 @@ class Config:
     mi_did: str = os.getenv("MI_DID", "")
     keyword: Iterable[str] = KEY_WORD
     change_prompt_keyword: Iterable[str] = CHANGE_PROMPT_KEY_WORD
+    recall_previous_keyword: Iterable[str] = RECALL_PREVIOUS_KEY_WORD
     prompt: str = PROMPT
     mute_xiaoai: bool = False
     bot: str = "chatgptapi"
@@ -92,6 +94,7 @@ class Config:
     poll_interval: float = float(os.getenv("XIAOGPT_POLL_INTERVAL", "1"))
     start_conversation: str = "开始持续对话"
     end_conversation: str = "结束持续对话"
+    recall_previous_query_timeout: int = 90
     stream: bool = False
     tts: Literal[
         "mi", "edge", "azure", "openai", "baidu", "google", "volc", "minimax", "fish"
@@ -150,6 +153,8 @@ class Config:
             validate_proxy(self.proxy)
         if self.poll_interval <= 0:
             raise Exception("poll_interval must be greater than 0")
+        if self.recall_previous_query_timeout < 0:
+            raise Exception("recall_previous_query_timeout must be >= 0")
         if self.cookie and any([self.account, self.password, self.pass_token]):
             raise Exception(
                 "cookie login is enabled; please do not also set "
@@ -232,7 +237,11 @@ class Config:
             for key, value in config.items():
                 if value is None:
                     continue
-                if key == "keyword":
+                if key in {
+                    "keyword",
+                    "change_prompt_keyword",
+                    "recall_previous_keyword",
+                }:
                     if not isinstance(value, list):
                         value = [value]
                     value = [kw for kw in value if kw]

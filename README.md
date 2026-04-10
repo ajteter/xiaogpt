@@ -152,6 +152,9 @@ mute_xiaoai: true
 poll_interval: 3
 keyword:
   - "你个渣渣"
+recall_previous_keyword:
+  - "回答上一句"
+recall_previous_query_timeout: 90
 ```
 
 说明：
@@ -160,6 +163,8 @@ keyword:
 - 当前最推荐 `tts: "mi"`
 - `mute_xiaoai: true` 适合减少和小爱原回答重叠，但也会让“被新记录打断”的体感更明显
 - `poll_interval` 是小爱会话轮询间隔，默认建议可以调到 `3`
+- `recall_previous_keyword` 可配置一个或多个“回捞上一句”口令，命中后会把最近一次未触发大模型的普通提问交给模型
+- `recall_previous_query_timeout` 默认 `90` 秒，超时后回捞口令不会继续使用旧问题
 
 ## 配置自检
 

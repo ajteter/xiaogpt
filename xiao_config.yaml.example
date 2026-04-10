@@ -39,8 +39,11 @@ keyword:
   - "请"
 change_prompt_keyword:
   - "更改提示词"
+recall_previous_keyword:
+  - "回答上一句"
 start_conversation: "开始持续对话"
 end_conversation: "结束持续对话"
+recall_previous_query_timeout: 90
 stream: true
 gpt_options: {}
 

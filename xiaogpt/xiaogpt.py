@@ -44,6 +44,8 @@ class MiGPT:
         self.mina_service = None
         self.miio_service = None
         self.in_conversation = False
+        self.previous_record = None
+        self.pending_query = None
         self.polling_event = asyncio.Event()
         self.last_record = asyncio.Queue(1)
         self.device_failures = {
@@ -124,7 +126,10 @@ class MiGPT:
                     if (
                         self.config.mute_xiaoai
                         and new_record
-                        and self.need_ask_gpt(new_record)
+                        and (
+                            self.need_ask_gpt(new_record)
+                            or self.need_recall_previous_query(new_record)
+                        )
                     ):
                         await self.stop_if_xiaoai_is_playing()
                     if (d := time.perf_counter() - start) < self.config.poll_interval:
@@ -285,12 +290,96 @@ class MiGPT:
         return (
             self.in_conversation
             and not query.startswith(WAKEUP_KEYWORD)
-            or query.lower().startswith(tuple(w.lower() for w in self.config.keyword))
+            or self._is_keyword_query(query)
         )
 
     def need_change_prompt(self, record):
         query = record.get("query", "")
+        return self._is_change_prompt_query(query)
+
+    def need_recall_previous_query(self, record):
+        if not record:
+            return False
+        query = record.get("query", "")
+        return self._is_recall_previous_query(query)
+
+    def _is_keyword_query(self, query: str) -> bool:
+        keywords = tuple(w.lower() for w in self.config.keyword)
+        return bool(keywords) and query.lower().startswith(keywords)
+
+    def _is_change_prompt_query(self, query: str) -> bool:
         return query.startswith(tuple(self.config.change_prompt_keyword))
+
+    def _is_recall_previous_query(self, query: str) -> bool:
+        return query.startswith(tuple(self.config.recall_previous_keyword))
+
+    def _is_control_query(self, query: str) -> bool:
+        return (
+            query == self.config.start_conversation
+            or query == self.config.end_conversation
+            or self._is_change_prompt_query(query)
+            or self._is_recall_previous_query(query)
+        )
+
+    @staticmethod
+    def _record_time_ms(record: dict | None) -> int | None:
+        if not record:
+            return None
+        timestamp = record.get("time")
+        if isinstance(timestamp, (int, float)):
+            return int(timestamp)
+        return None
+
+    @staticmethod
+    def _normalize_pending_query(query: str) -> str:
+        query = query.strip()
+        if query.startswith(WAKEUP_KEYWORD):
+            query = query[len(WAKEUP_KEYWORD) :].lstrip("，,。.!！?？ ")
+        return query.strip()
+
+    def _can_recall_query(self, query: str) -> bool:
+        return bool(query) and not (
+            self._is_control_query(query) or self._is_keyword_query(query)
+        )
+
+    def _is_recall_candidate_fresh(
+        self, candidate_time: int | None, current_time: int | None
+    ) -> bool:
+        timeout = self.config.recall_previous_query_timeout
+        if timeout <= 0 or candidate_time is None or current_time is None:
+            return True
+        return current_time - candidate_time <= timeout * 1000
+
+    def remember_pending_query(self, record: dict) -> None:
+        query = self._normalize_pending_query(record.get("query", ""))
+        if not self._can_recall_query(query):
+            return
+        self.pending_query = (query, self._record_time_ms(record))
+
+    def clear_pending_query(self) -> None:
+        self.pending_query = None
+
+    def _get_recall_query_from_record(
+        self, record: dict | None, current_time: int | None
+    ) -> str | None:
+        if not record:
+            return None
+        query = self._normalize_pending_query(record.get("query", ""))
+        if not self._can_recall_query(query):
+            return None
+        candidate_time = self._record_time_ms(record)
+        if not self._is_recall_candidate_fresh(candidate_time, current_time):
+            return None
+        return query
+
+    def get_recall_query(self, current_record: dict) -> str | None:
+        current_time = self._record_time_ms(current_record)
+        if self.pending_query:
+            query, candidate_time = self.pending_query
+            if self._is_recall_candidate_fresh(candidate_time, current_time):
+                return query
+            self.clear_pending_query()
+        return self._get_recall_query_from_record(self.previous_record, current_time)
 
     def _change_prompt(self, new_prompt):
         new_prompt = re.sub(
@@ -343,6 +432,7 @@ class MiGPT:
                 return None
             if not records:
                 return None
+            self.previous_record = records[1] if len(records) > 1 else None
             last_record = records[0]
             timestamp = last_record.get("time")
             if isinstance(timestamp, (int, float)) and timestamp > self.last_timestamp:
@@ -503,6 +593,11 @@ class MiGPT:
             f"[green]{'/'.join(self.config.keyword)}[/] 开头来提问"
         )
         print(f"或用 [green]{self.config.start_conversation}[/] 开始持续对话")
+        if self.config.recall_previous_keyword:
+            print(
+                "或用 "
+                f"[green]{'/'.join(self.config.recall_previous_keyword)}[/] 回捞上一句普通提问"
+            )
         try:
             while True:
                 try:
@@ -529,13 +624,30 @@ class MiGPT:
                     if self.need_change_prompt(new_record):
                         print(new_record)
                         self._change_prompt(new_record.get("query", ""))
-
-                    if not self.need_ask_gpt(new_record):
-                        self.log.debug("No new xiao ai record")
                         continue
 
-                    # drop key words
-                    query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
+                    is_recall_query = self.need_recall_previous_query(new_record)
+                    if is_recall_query:
+                        query = self.get_recall_query(new_record)
+                        if not query:
+                            print("没有找到可回捞的上一句问题")
+                            await self.do_tts("没有找到刚才的问题")
+                            if self.in_conversation:
+                                print(
+                                    f"继续对话，或用 `{self.config.end_conversation}` 结束对话"
+                                )
+                                await self.wakeup_xiaoai()
+                            continue
+                        self.clear_pending_query()
+                    else:
+                        if not self.need_ask_gpt(new_record):
+                            self.remember_pending_query(new_record)
+                            self.log.debug("No new xiao ai record")
+                            continue
+
+                        self.clear_pending_query()
+                        # drop key words
+                        query = re.sub(rf"^({'|'.join(self.config.keyword)})", "", query)
                     # llama3 is not good at Chinese, so we need to add prompt in it.
                     if self.config.bot == "llama":
                         query = (
@@ -545,7 +657,8 @@ class MiGPT:
                         )
 
                     print("-" * 20)
-                    print("问题：" + query + "？")
+                    question_label = "回捞问题" if is_recall_query else "问题"
+                    print(f"{question_label}：" + query + "？")
                     if not self.chatbot.has_history():
                         query = f"{query},{self.config.prompt}"
                     # some model can not detect the language code, so we need to add it
