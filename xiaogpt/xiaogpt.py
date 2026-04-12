@@ -308,15 +308,23 @@ class MiGPT:
         return bool(keywords) and query.lower().startswith(keywords)
 
     def _is_change_prompt_query(self, query: str) -> bool:
-        return query.startswith(tuple(self.config.change_prompt_keyword))
+        normalized_query = self._normalize_query_text(query)
+        return normalized_query.startswith(tuple(self.config.change_prompt_keyword))
 
     def _is_recall_previous_query(self, query: str) -> bool:
-        return query.startswith(tuple(self.config.recall_previous_keyword))
+        normalized_query = self._normalize_query_text(query)
+        return normalized_query.startswith(tuple(self.config.recall_previous_keyword))
+
+    def _is_start_conversation_query(self, query: str) -> bool:
+        return self._normalize_query_text(query) == self.config.start_conversation
+
+    def _is_end_conversation_query(self, query: str) -> bool:
+        return self._normalize_query_text(query) == self.config.end_conversation
 
     def _is_control_query(self, query: str) -> bool:
         return (
-            query == self.config.start_conversation
-            or query == self.config.end_conversation
+            self._is_start_conversation_query(query)
+            or self._is_end_conversation_query(query)
             or self._is_change_prompt_query(query)
             or self._is_recall_previous_query(query)
         )
@@ -331,11 +339,15 @@ class MiGPT:
         return None
 
     @staticmethod
-    def _normalize_pending_query(query: str) -> str:
+    def _normalize_query_text(query: str) -> str:
         query = query.strip()
         if query.startswith(WAKEUP_KEYWORD):
             query = query[len(WAKEUP_KEYWORD) :].lstrip("，,。.!！?？ ")
         return query.strip()
+
+    @staticmethod
+    def _normalize_pending_query(query: str) -> str:
+        return MiGPT._normalize_query_text(query)
 
     def _can_recall_query(self, query: str) -> bool:
         return bool(query) and not (
@@ -606,14 +618,15 @@ class MiGPT:
                     # Stop polling while processing the current question.
                     self.polling_event.clear()
                     query = new_record.get("query", "").strip()
-                    if query == self.config.start_conversation:
+                    normalized_query = self._normalize_query_text(query)
+                    if self._is_start_conversation_query(query):
                         if not self.in_conversation:
                             print("开始对话")
                             self.in_conversation = True
                             await self.wakeup_xiaoai()
                         await self.stop_if_xiaoai_is_playing()
                         continue
-                    elif query == self.config.end_conversation:
+                    elif self._is_end_conversation_query(query):
                         if self.in_conversation:
                             print("结束对话")
                             self.in_conversation = False
@@ -623,7 +636,7 @@ class MiGPT:
                     # we can change prompt
                     if self.need_change_prompt(new_record):
                         print(new_record)
-                        self._change_prompt(new_record.get("query", ""))
+                        self._change_prompt(normalized_query)
                         continue
 
                     is_recall_query = self.need_recall_previous_query(new_record)
@@ -648,7 +661,7 @@ class MiGPT:
                         self.clear_pending_query()
                         # drop key words
                         query = re.sub(
-                            rf"^({'|'.join(self.config.keyword)})", "", query
+                            rf"^({'|'.join(self.config.keyword)})", "", normalized_query
                         )
                     # llama3 is not good at Chinese, so we need to add prompt in it.
                     if self.config.bot == "llama":
