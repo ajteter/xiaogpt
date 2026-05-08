@@ -20,8 +20,8 @@ generation_config = {
     "maxOutputTokens": 4096,
 }
 
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
-DEFAULT_SEARCH_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-flash-latest"
+DEFAULT_SEARCH_MODEL = "gemini-flash-latest"
 DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
 
 safety_settings = [
@@ -47,7 +47,7 @@ class GeminiBot(ChatHistoryMixin, BaseBot):
         gemini_key: str,
         gemini_api_domain: str,
         gemini_model: str,
-        gemini_google_search: bool = False,
+        gemini_google_search: bool = True,
         proxy: str | None = None,
     ) -> None:
         self.gemini_key = gemini_key

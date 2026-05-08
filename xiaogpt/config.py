@@ -63,8 +63,8 @@ class Config:
     llama_api_key: str = os.getenv("GROQ_API_KEY", "")  # use groq
     glm_key: str = os.getenv("CHATGLM_KEY", "")
     gemini_key: str = os.getenv("GEMINI_KEY", "")  # keep the old rule
-    gemini_model: str = os.getenv("GEMINI_MODEL", "")  # keep the old rule
-    gemini_google_search: bool = os.getenv("GEMINI_GOOGLE_SEARCH", "").lower() in (
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    gemini_google_search: bool = os.getenv("GEMINI_GOOGLE_SEARCH", "true").lower() in (
         "1",
         "true",
         "yes",
@@ -191,8 +191,8 @@ class Config:
                 raise Exception(
                     "Using Gemini api needs gemini API key, please google how to"
                 )
-            if self.gemini_google_search and not self.gemini_model:
-                self.gemini_model = "gemini-2.0-flash"
+            if not self.gemini_model:
+                self.gemini_model = "gemini-flash-latest"
 
     @property
     def tts_command(self) -> str:
